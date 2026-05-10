@@ -101,6 +101,11 @@ def on_build_graph():
     all_nodes = []
     all_edges = []
 
+    # Warn if chapters are too few
+    total_ch = sum(len(tb.chapters) for tb in textbooks.values())
+    if total_ch <= 2:
+        gr.Warning("该教材章节识别较少，图谱节点可能稀疏，建议尝试其他教材或加载样例教材。", duration=5)
+
     try:
         for tb in textbooks.values():
             if tb.status == ParseStatus.DONE:
