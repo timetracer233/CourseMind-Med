@@ -1,7 +1,18 @@
 import os
 from pathlib import Path
 from datetime import datetime
+from collections import Counter
 from src.schemas import Textbook, KnowledgeNode, KnowledgeEdge, IntegrationDecision, DecisionAction
+
+
+def _cat_stats(nodes: list[KnowledgeNode]) -> str:
+    counts = Counter(n.category for n in nodes)
+    return "、".join(f"{c} {n}个" for c, n in counts.most_common())
+
+
+def _rel_stats(edges: list[KnowledgeEdge]) -> str:
+    counts = Counter(e.relation_type for e in edges)
+    return "、".join(f"{r} {n}条" for r, n in counts.most_common())
 
 
 def generate_report(
@@ -24,12 +35,22 @@ def generate_report(
 
     cases_md = ""
     for i, d in enumerate(merge_cases):
+        # Look up node details
+        node_details = []
+        for name in d.affected_nodes:
+            for n in nodes:
+                if n.name == name:
+                    node_details.append(f"  - 「{n.name}」({n.textbook} / {n.chapter}): {n.definition[:80]}")
+                    break
+        detail_text = "\n".join(node_details) if node_details else "（无详细节点信息）"
         cases_md += f"""### 案例 {i + 1}：合并「{' + '.join(d.affected_nodes)}」
 
 - **决策 ID**：{d.decision_id}
 - **整合结果**：→「{d.result_node}」
 - **理由**：{d.reason}
 - **置信度**：{d.confidence}
+- **涉及知识点**：
+{detail_text}
 
 """
 
@@ -63,8 +84,8 @@ def generate_report(
 
 - **节点数**：{len(nodes)}
 - **边数**：{len(edges)}
-- **节点类别分布**：待补充
-- **关系类型分布**：待补充
+- **节点类别分布**：{_cat_stats(nodes)}
+- **关系类型分布**：{_rel_stats(edges)}
 
 ## 4. 典型整合案例
 

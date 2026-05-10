@@ -4,6 +4,41 @@ from src.llm_client import chat_json, has_api_key
 
 EXTRACT_PROMPT = """你是一个医学教材知识工程师。请从以下教材章节中抽取核心知识点和它们之间的关系。
 
+示例输入章节："炎症的基本概念"
+示例输入内容："炎症是机体对损伤因子的防御性反应。炎症的局部临床表现包括红、肿、热、痛和功能障碍。"
+示例输出：
+{{
+  "nodes": [
+    {{
+      "name": "炎症",
+      "definition": "机体对损伤因子的防御性反应",
+      "category": "核心概念",
+      "chapter": "炎症的基本概念",
+      "page": 1,
+      "confidence": 0.95
+    }},
+    {{
+      "name": "损伤因子",
+      "definition": "引起组织损伤的致炎因子",
+      "category": "概念",
+      "chapter": "炎症的基本概念",
+      "page": 1,
+      "confidence": 0.85
+    }}
+  ],
+  "edges": [
+    {{
+      "source": "损伤因子",
+      "target": "炎症",
+      "relation_type": "prerequisite",
+      "description": "损伤因子是炎症的诱因"
+    }}
+  ]
+}}
+
+---
+现在请从以下教材章节中抽取核心知识点和它们之间的关系。
+
 章节: {chapter}
 教材: {textbook}
 内容:
@@ -17,7 +52,8 @@ EXTRACT_PROMPT = """你是一个医学教材知识工程师。请从以下教材
       "definition": "一句话定义",
       "category": "核心概念|机制|方法|现象|结构",
       "chapter": "{chapter}",
-      "page": {page}
+      "page": {page},
+      "confidence": 0.0-1.0
     }}
   ],
   "edges": [
@@ -61,6 +97,7 @@ def _rule_extract(tb: Textbook) -> tuple[list[KnowledgeNode], list[KnowledgeEdge
                 chapter=ch.title,
                 page=ch.page_start,
                 textbook=tb.filename,
+                confidence=0.7,
             ))
             for w, _ in top_words:
                 if w != name:
@@ -71,6 +108,7 @@ def _rule_extract(tb: Textbook) -> tuple[list[KnowledgeNode], list[KnowledgeEdge
                         chapter=ch.title,
                         page=ch.page_start,
                         textbook=tb.filename,
+                        confidence=0.5,
                     ))
 
     # create edges between nodes in same chapter
@@ -113,6 +151,7 @@ def extract_from_textbook(tb: Textbook) -> tuple[list[KnowledgeNode], list[Knowl
                 chapter=n.get("chapter", ch.title),
                 page=n.get("page", ch.page_start),
                 textbook=n.get("textbook", tb.filename),
+                confidence=float(n.get("confidence", 1.0)),
             ))
         for e in edges_data:
             all_edges.append(KnowledgeEdge(

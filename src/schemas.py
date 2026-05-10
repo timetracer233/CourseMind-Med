@@ -57,6 +57,7 @@ class KnowledgeNode:
     chapter: str
     page: int
     textbook: str
+    confidence: float = 1.0
 
 
 @dataclass
