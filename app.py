@@ -13,6 +13,7 @@ from src.graph_builder import build_graph_html
 from src.integrator import integrate
 from src.feedback import process_feedback
 from src.report_generator import generate_report
+from src.sankey import build_sankey
 from src.schemas import ParseStatus, DecisionAction
 from src.llm_client import has_api_key
 
@@ -156,12 +157,14 @@ def on_integrate():
             pd.DataFrame(columns=["决策ID", "操作", "涉及知识点", "结果", "理由", "置信度", "状态"]),
             "需要至少 2 本已解析的教材才能进行跨教材整合",
             "",
+            "<p style='color:#888;text-align:center'>—</p>",
         )
     if not all_nodes:
         return (
             pd.DataFrame(columns=["决策ID", "操作", "涉及知识点", "结果", "理由", "置信度", "状态"]),
             "请先在「知识图谱」中构建图谱",
             "",
+            "<p style='color:#888;text-align:center'>—</p>",
         )
 
     decisions, integration_stats = integrate(all_nodes)
@@ -194,8 +197,10 @@ def on_integrate():
 | 删除 | {integration_stats.get('remove_count', 0)} |
 """
 
+    sankey_html = build_sankey(all_nodes, decisions)
+
     msg = f"整合完成：{len(decisions)} 条决策 | 压缩比 {ratio:.1%}"
-    return dec_df, msg, stats_text
+    return dec_df, msg, stats_text, sankey_html
 
 
 def on_ask(query):
@@ -404,7 +409,9 @@ def create_app():
                             with gr.Column(scale=1):
                                 gr.Markdown("#### 压缩统计")
                                 stats_display = gr.Markdown("")
-                        integrate_btn.click(fn=on_integrate, inputs=[], outputs=[decision_table, integrate_msg, stats_display])
+                        gr.Markdown("#### 整合流向桑基图")
+                        sankey_html = gr.HTML("<p style='color:#888;text-align:center'>—</p>")
+                        integrate_btn.click(fn=on_integrate, inputs=[], outputs=[decision_table, integrate_msg, stats_display, sankey_html])
 
                     with gr.Tab("RAG 问答"):
                         with gr.Row():
