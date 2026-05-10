@@ -23,6 +23,10 @@ data/index/
 # Claude Code internal
 .claude/
 
+# Gradio runtime
+.gradio/
+*.log
+
 # Textbook files must not be committed
 *.pdf
 教材/

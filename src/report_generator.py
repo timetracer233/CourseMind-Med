@@ -16,7 +16,7 @@ def generate_report(
     textbook_names = list(textbooks.keys())
     total_chapters = sum(len(tb.chapters) for tb in textbooks.values())
     total_chars = sum(tb.total_chars for tb in textbooks.values())
-    compression_ratio = min(float(stats.get("compression_ratio", 0) or 0), 0.30)
+    compression_ratio = min(float(stats.get("compression_ratio", 0) or 0), 1.0)
     integrated_chars = int(total_chars * compression_ratio) if total_chars else 0
 
     # collect case studies (top 3 merge decisions)

@@ -148,7 +148,7 @@ def integrate(nodes: list[KnowledgeNode]) -> tuple[list[IntegrationDecision], di
     unique_nodes = len(name_to_nodes) - merge_count
     avg_def_len = total_chars / max(len(nodes), 1)
     integrated_chars = int(unique_nodes * avg_def_len)
-    compression_ratio = round(min(integrated_chars / max(total_chars, 1), 0.30), 4)
+    compression_ratio = round(min(integrated_chars / max(total_chars, 1), 1.0), 4)
 
     stats = {
         "total_nodes": len(nodes),

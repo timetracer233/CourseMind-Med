@@ -77,7 +77,6 @@ def on_parse(files):
         textbooks[tb.filename] = tb
         count += 1
 
-    # Rebuild RAG index
     all_chunks = chunk_all(textbooks)
     rag_engine.index(all_chunks)
 
@@ -85,7 +84,7 @@ def on_parse(files):
     total_chars = sum(tb.total_chars for tb in textbooks.values())
     done = sum(1 for tb in textbooks.values() if tb.status == ParseStatus.DONE)
     failed = sum(1 for tb in textbooks.values() if tb.status == ParseStatus.FAILED)
-    msg = f"解析完成：{count} 个文件 | 成功 {done} / 失败 {failed} | {total_chapters} 个章节 | {total_chars:,} 字 | 检索后端：{rag_engine.backend}"
+    msg = f"解析完成：{count} 个文件 | 成功 {done} / 失败 {failed} | {total_chapters} 个章节 | {total_chars:,} 字"
 
     return _status_table(), _chapter_table(), msg
 
@@ -110,7 +109,7 @@ def on_build_graph():
 
     if not all_nodes:
         return (
-            "<p style='color:#888;text-align:center;padding:80px'>暂无知识点，请先在「教材管理」中上传并解析教材</p>",
+            "<p style='color:#888;text-align:center;padding:80px'>暂无知识点，请先在左侧上传并解析教材</p>",
             pd.DataFrame(columns=["名称", "类别", "教材", "章节", "定义"]),
             pd.DataFrame(columns=["源", "目标", "关系", "说明"]),
             "暂无知识点",
@@ -170,9 +169,7 @@ def on_integrate():
     integrated = integration_stats.get("integrated_chars", 0)
     ratio = integration_stats.get("compression_ratio", 0)
 
-    stats_text = f"""### 压缩比统计
-
-| 指标 | 数值 |
+    stats_text = f"""| 指标 | 数值 |
 |------|------|
 | 原始知识点字数 | {orig:,} |
 | 整合后估算字数 | {integrated:,} |
@@ -190,16 +187,28 @@ def on_ask(query):
     if not query or not query.strip():
         return "请输入问题", ""
     if not rag_engine.chunks:
-        return "请先在「教材管理」中上传并解析教材，建立知识库索引后再提问。", ""
+        return "请先在左侧上传并解析教材，建立知识库索引后再提问。", ""
 
     answer, refs = rag_engine.ask(query.strip())
 
-    ref_text = "### 引用来源\n\n"
-    for i, r in enumerate(refs):
-        ref_text += (
-            f"**{i + 1}.** {r['教材']} / {r['章节']} / 第{r['页码']}页 "
-            f"(相关度: {r['相关度']})\n\n> {r['原文片段']}\n\n"
-        )
+    no_answer = "未找到相关信息" in answer or "未找到" in answer
+    ref_text = ""
+    if refs:
+        header = "### 检索结果
+
+" if no_answer else "### 引用来源
+
+"
+        ref_text = header
+        for i, r in enumerate(refs):
+            ref_text += (
+                f"**{i + 1}.** {r['教材']} / {r['章节']} / 第{r['页码']}页 "
+                f"(相关度: {r['相关度']})
+
+> {r['原文片段']}
+
+"
+            )
 
     return answer, ref_text
 
@@ -241,7 +250,6 @@ def on_generate_report():
 
 
 def on_load_example():
-    """Create sample MD textbooks for demo."""
     sample_dir = Path("data/samples")
     sample_dir.mkdir(parents=True, exist_ok=True)
 
@@ -307,60 +315,68 @@ def on_load_example():
 炎症的转归取决于致炎因子的性质和机体状态。可能的结果包括：完全恢复、纤维化、转为慢性或扩散。
 """, encoding="utf-8")
 
-    return [str(sample_a), str(sample_b)], "样例教材已生成：医学基础_炎症与免疫.md + 医学进阶_免疫与病理.md"
+    return [str(sample_a), str(sample_b)], "样例教材已生成"
 
 
 # ---- Gradio UI ----
 CSS = """
-.status-done { color: #2ecc71; font-weight: bold; }
-.status-failed { color: #e74c3c; }
-.stats-box { background: #f8f9fa; padding: 16px; border-radius: 8px; margin: 8px 0; }
 footer { visibility: hidden; }
+.sidebar { background: #fafbfc; border-right: 1px solid #e8ecf0; padding: 16px; min-height: 100vh; }
+.main-header { background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%); padding: 20px 24px; border-radius: 10px; margin-bottom: 16px; }
+.tab-nav button.selected { background: #1976d2 !important; color: white !important; }
 """
 
 
 def create_app():
-    with gr.Blocks(title="医教精华压缩 Agent") as demo:
-        gr.Markdown("# 医教精华压缩 Agent")
-        gr.Markdown("通用教材知识整合智能体 · 上传教材 → 解析章节 → 知识图谱 → 跨教材整合 → RAG问答 → 教师反馈 → 整合报告")
+    theme = gr.themes.Soft(
+        primary_hue="blue",
+        secondary_hue="blue",
+        neutral_hue="slate",
+    )
+
+    with gr.Blocks(title="CourseMind-Med", css=CSS, theme=theme) as demo:
+        # Header
+        with gr.Row(elem_classes="main-header"):
+            with gr.Column(scale=1):
+                gr.Markdown("# CourseMind-Med")
+                gr.Markdown("通用教材知识整合智能体 — 上传、解析、图谱、整合、问答、报告")
 
         if not has_api_key():
-            gr.Markdown("---\n⚠️ **未配置 DEEPSEEK_API_KEY**：知识抽取和 RAG 问答将使用规则兜底模式。请在 `.env` 文件中配置 `DEEPSEEK_API_KEY` 以获得完整 LLM 功能。")
+            gr.Markdown("⚠️ 未配置 DEEPSEEK_API_KEY，知识抽取和问答将使用规则兜底。请在 `.env` 中配置 API Key。")
 
-        with gr.Tabs():
-            # ============ Tab 1: 教材管理 ============
-            with gr.Tab("教材管理"):
-                gr.Markdown("### 上传教材文件（PDF / Markdown / TXT）")
+        # Main layout: left sidebar + right tabs
+        with gr.Row():
+            # ===== LEFT SIDEBAR: 教材管理 =====
+            with gr.Column(scale=1, min_width=280):
+                gr.Markdown("### 教材管理")
+                file_input = gr.File(
+                    label="上传教材（PDF/MD/TXT）",
+                    file_types=[".pdf", ".md", ".txt"],
+                    file_count="multiple",
+                )
                 with gr.Row():
-                    file_input = gr.File(
-                        label="选择教材文件",
-                        file_types=[".pdf", ".md", ".txt"],
-                        file_count="multiple",
-                    )
-                with gr.Row():
-                    parse_btn = gr.Button("解析教材", variant="primary", size="lg")
-                    clear_btn = gr.Button("清空所有教材", variant="secondary", size="lg")
-                    load_example_btn = gr.Button("加载样例教材", variant="secondary", size="lg")
+                    parse_btn = gr.Button("解析教材", variant="primary", size="sm")
+                    load_example_btn = gr.Button("加载样例", variant="secondary", size="sm")
+                clear_btn = gr.Button("清空教材", variant="secondary", size="sm")
+                parse_msg = gr.Markdown("准备就绪")
 
-                parse_msg = gr.Markdown("准备就绪，请上传教材文件")
+                gr.Markdown("#### 文件状态")
+                status_table = gr.Dataframe(
+                    _status_table(),
+                    label="处理状态",
+                    interactive=False,
+                    wrap=True,
+                    max_height=200,
+                )
 
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        gr.Markdown("#### 文件状态")
-                        status_table = gr.Dataframe(
-                            _status_table(),
-                            label="教材处理状态",
-                            interactive=False,
-                            wrap=True,
-                        )
-                    with gr.Column(scale=1):
-                        gr.Markdown("#### 章节列表")
-                        chapter_table = gr.Dataframe(
-                            _chapter_table(),
-                            label="章节详情",
-                            interactive=False,
-                            wrap=True,
-                        )
+                gr.Markdown("#### 章节列表")
+                chapter_table = gr.Dataframe(
+                    _chapter_table(),
+                    label="章节详情",
+                    interactive=False,
+                    wrap=True,
+                    max_height=300,
+                )
 
                 parse_btn.click(
                     fn=on_parse,
@@ -378,140 +394,119 @@ def create_app():
                     outputs=[file_input, parse_msg],
                 )
 
-            # ============ Tab 2: 知识图谱 ============
-            with gr.Tab("知识图谱"):
-                gr.Markdown("### 交互式知识图谱")
-                build_graph_btn = gr.Button("抽取知识点 / 构建图谱", variant="primary", size="lg")
-                graph_msg = gr.Markdown("请先点击按钮构建图谱")
+            # ===== RIGHT: Tabs for all functions =====
+            with gr.Column(scale=3):
+                with gr.Tabs():
+                    # Tab 1: 知识图谱
+                    with gr.Tab("知识图谱"):
+                        with gr.Row():
+                            build_graph_btn = gr.Button("抽取知识点 / 构建图谱", variant="primary")
+                            graph_msg = gr.Markdown("点击按钮构建", elem_id="graph-msg")
+                        graph_html = gr.HTML(
+                            value="<p style='color:#888;text-align:center;padding:60px'>点击上方按钮生成可交互知识图谱（可缩放、拖拽、悬停查看详情）</p>",
+                        )
+                        with gr.Accordion("节点 / 边详情", open=False):
+                            with gr.Row():
+                                node_table = gr.Dataframe(
+                                    pd.DataFrame(columns=["名称", "类别", "教材", "章节", "定义"]),
+                                    label="节点",
+                                    interactive=False,
+                                    wrap=True,
+                                )
+                                edge_table = gr.Dataframe(
+                                    pd.DataFrame(columns=["源", "目标", "关系", "说明"]),
+                                    label="边",
+                                    interactive=False,
+                                    wrap=True,
+                                )
 
-                graph_html = gr.HTML(
-                    value="<p style='color:#888;text-align:center;padding:80px'>点击上方按钮生成可交互知识图谱</p>",
-                    label="知识图谱（可缩放/拖拽/悬停）",
-                )
+                        build_graph_btn.click(
+                            fn=on_build_graph,
+                            inputs=[],
+                            outputs=[graph_html, node_table, edge_table, graph_msg],
+                        )
 
-                with gr.Accordion("节点列表", open=False):
-                    node_table = gr.Dataframe(
-                        pd.DataFrame(columns=["名称", "类别", "教材", "章节", "定义"]),
-                        label="知识点节点",
-                        interactive=False,
-                        wrap=True,
-                    )
-                with gr.Accordion("边列表", open=False):
-                    edge_table = gr.Dataframe(
-                        pd.DataFrame(columns=["源", "目标", "关系", "说明"]),
-                        label="知识点关系",
-                        interactive=False,
-                        wrap=True,
-                    )
+                    # Tab 2: 跨教材整合
+                    with gr.Tab("跨教材整合"):
+                        integrate_btn = gr.Button("执行跨教材整合", variant="primary")
+                        integrate_msg = gr.Markdown("请先构建知识图谱")
+                        with gr.Row():
+                            with gr.Column(scale=2):
+                                decision_table = gr.Dataframe(
+                                    pd.DataFrame(columns=["决策ID", "操作", "涉及知识点", "结果", "理由", "置信度", "状态"]),
+                                    label="整合决策",
+                                    interactive=False,
+                                    wrap=True,
+                                )
+                            with gr.Column(scale=1):
+                                gr.Markdown("#### 压缩统计")
+                                stats_display = gr.Markdown("")
 
-                build_graph_btn.click(
-                    fn=on_build_graph,
-                    inputs=[],
-                    outputs=[graph_html, node_table, edge_table, graph_msg],
-                )
+                        integrate_btn.click(
+                            fn=on_integrate,
+                            inputs=[],
+                            outputs=[decision_table, integrate_msg, stats_display],
+                        )
 
-            # ============ Tab 3: 跨教材整合 ============
-            with gr.Tab("跨教材整合"):
-                gr.Markdown("### 跨教材知识点去重与整合决策")
-                integrate_btn = gr.Button("执行跨教材整合", variant="primary", size="lg")
-                integrate_msg = gr.Markdown("请先构建知识图谱，然后点击执行整合")
+                    # Tab 3: RAG 问答
+                    with gr.Tab("RAG 问答"):
+                        with gr.Row():
+                            question_input = gr.Textbox(
+                                label="问题",
+                                placeholder="例如：炎症的定义是什么？",
+                                scale=3,
+                            )
+                            ask_btn = gr.Button("提问", variant="primary", scale=1)
+                        with gr.Row():
+                            with gr.Column():
+                                gr.Markdown("#### 答案")
+                                answer_output = gr.Markdown("等待提问...")
+                            with gr.Column():
+                                gr.Markdown("#### 引用来源")
+                                ref_output = gr.Markdown("")
 
-                with gr.Row():
-                    with gr.Column(scale=2):
-                        gr.Markdown("#### 整合决策表")
-                        decision_table = gr.Dataframe(
+                        ask_btn.click(
+                            fn=on_ask,
+                            inputs=[question_input],
+                            outputs=[answer_output, ref_output],
+                        )
+
+                    # Tab 4: 教师反馈
+                    with gr.Tab("教师反馈"):
+                        gr.Markdown("支持指令：**保留 / 删除 / 不要合并 / 为什么合并** + 知识点名称")
+                        feedback_chat = gr.Chatbot(label="反馈对话", height=250)
+                        with gr.Row():
+                            feedback_input = gr.Textbox(
+                                label="指令",
+                                placeholder="例如：不要合并 炎症 和 炎症反应",
+                                scale=3,
+                            )
+                            feedback_btn = gr.Button("发送", variant="primary", scale=1)
+                        feedback_msg = gr.Markdown("")
+                        feedback_decision_table = gr.Dataframe(
                             pd.DataFrame(columns=["决策ID", "操作", "涉及知识点", "结果", "理由", "置信度", "状态"]),
-                            label="整合决策",
+                            label="当前决策",
                             interactive=False,
                             wrap=True,
                         )
-                    with gr.Column(scale=1):
-                        gr.Markdown("#### 压缩统计")
-                        stats_display = gr.Markdown("")
 
-                integrate_btn.click(
-                    fn=on_integrate,
-                    inputs=[],
-                    outputs=[decision_table, integrate_msg, stats_display],
-                )
-
-            # ============ Tab 4: RAG 问答 ============
-            with gr.Tab("RAG 问答"):
-                gr.Markdown("### 基于教材内容的问答（带原文引用）")
-                with gr.Row():
-                    with gr.Column(scale=3):
-                        question_input = gr.Textbox(
-                            label="输入问题",
-                            placeholder="例如：炎症的定义是什么？",
-                            lines=2,
+                        feedback_btn.click(
+                            fn=on_feedback,
+                            inputs=[feedback_input, feedback_chat],
+                            outputs=[feedback_chat, feedback_decision_table, feedback_msg],
                         )
-                    with gr.Column(scale=1):
-                        ask_btn = gr.Button("提问", variant="primary", size="lg")
 
-                with gr.Row():
-                    with gr.Column(scale=1):
-                        gr.Markdown("#### 答案")
-                        answer_output = gr.Markdown("等待提问...")
-                    with gr.Column(scale=1):
-                        gr.Markdown("#### 引用来源")
-                        ref_output = gr.Markdown("")
+                    # Tab 5: 整合报告
+                    with gr.Tab("整合报告"):
+                        report_btn = gr.Button("生成整合报告", variant="primary")
+                        report_msg = gr.Markdown("点击按钮生成报告")
+                        report_preview = gr.Markdown("报告将在此处预览...")
 
-                ask_btn.click(
-                    fn=on_ask,
-                    inputs=[question_input],
-                    outputs=[answer_output, ref_output],
-                )
-
-            # ============ Tab 5: 教师反馈 ============
-            with gr.Tab("教师反馈"):
-                gr.Markdown("### 教师反馈修改整合决策")
-                gr.Markdown("""
-支持以下指令：
-- **保留 <知识点名称>** — 将删除改为保留
-- **删除 <知识点名称>** — 将保留改为删除
-- **不要合并 <A> 和 <B>** — 取消合并决策
-- **为什么合并 <知识点名称>** — 查看合并理由
-""")
-                feedback_chat = gr.Chatbot(label="反馈对话", height=300)
-                with gr.Row():
-                    feedback_input = gr.Textbox(
-                        label="输入指令",
-                        placeholder="例如：不要合并 炎症 和 炎症反应",
-                        scale=3,
-                    )
-                    feedback_btn = gr.Button("发送", variant="primary", scale=1)
-
-                feedback_msg = gr.Markdown("")
-                gr.Markdown("#### 更新后的决策表")
-                feedback_decision_table = gr.Dataframe(
-                    pd.DataFrame(columns=["决策ID", "操作", "涉及知识点", "结果", "理由", "置信度", "状态"]),
-                    label="当前决策",
-                    interactive=False,
-                    wrap=True,
-                )
-
-                feedback_btn.click(
-                    fn=on_feedback,
-                    inputs=[feedback_input, feedback_chat],
-                    outputs=[feedback_chat, feedback_decision_table, feedback_msg],
-                )
-
-            # ============ Tab 6: 整合报告 ============
-            with gr.Tab("整合报告"):
-                gr.Markdown("### 生成整合报告")
-                report_btn = gr.Button("生成整合报告", variant="primary", size="lg")
-                report_msg = gr.Markdown("点击按钮生成 Markdown 格式的整合报告")
-
-                report_preview = gr.Markdown(
-                    "报告将在此处预览...",
-                    label="报告预览",
-                )
-
-                report_btn.click(
-                    fn=on_generate_report,
-                    inputs=[],
-                    outputs=[report_preview, report_msg],
-                )
+                        report_btn.click(
+                            fn=on_generate_report,
+                            inputs=[],
+                            outputs=[report_preview, report_msg],
+                        )
 
         return demo
 
@@ -519,4 +514,14 @@ def create_app():
 demo = create_app()
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860, css=CSS, theme=gr.themes.Soft())
+    demo.queue(default_concurrency_limit=3, max_size=10).launch(
+        server_name="0.0.0.0",
+        server_port=7860,
+        css=CSS,
+        theme=gr.themes.Soft(
+            primary_hue="blue",
+            secondary_hue="blue",
+            neutral_hue="slate",
+        ),
+        share=True,
+    )

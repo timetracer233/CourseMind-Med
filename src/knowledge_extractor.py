@@ -97,7 +97,7 @@ def extract_from_textbook(tb: Textbook) -> tuple[list[KnowledgeNode], list[Knowl
         prompt = EXTRACT_PROMPT.format(
             chapter=ch.title,
             textbook=tb.filename,
-            text=ch.text[:3000],
+            text=ch.text[:1500],
             page=ch.page_start,
         )
         result = chat_json([{"role": "user", "content": prompt}])
