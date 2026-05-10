@@ -64,9 +64,17 @@ def _chapter_table() -> pd.DataFrame:
 
 
 def on_parse(files):
-    global textbooks, rag_engine
+    global textbooks, rag_engine, all_nodes, all_edges, decisions, integration_stats
     if not files:
         return _status_table(), _chapter_table(), "请先上传教材文件（PDF / MD / TXT）"
+
+    # Clear all global state before parsing new files
+    textbooks.clear()
+    rag_engine = RAGEngine()
+    all_nodes.clear()
+    all_edges.clear()
+    decisions.clear()
+    integration_stats.clear()
 
     count = 0
     for fp in files:
@@ -91,9 +99,13 @@ def on_parse(files):
 
 
 def on_clear_files():
-    global textbooks, rag_engine
+    global textbooks, rag_engine, all_nodes, all_edges, decisions, integration_stats
     textbooks.clear()
     rag_engine = RAGEngine()
+    all_nodes.clear()
+    all_edges.clear()
+    decisions.clear()
+    integration_stats.clear()
     return _status_table(), _chapter_table(), "已清空所有教材"
 
 
@@ -167,7 +179,7 @@ def on_integrate():
             "<p style='color:#888;text-align:center'>—</p>",
         )
 
-    decisions, integration_stats = integrate(all_nodes)
+    decisions, integration_stats = integrate(all_nodes, sum(tb.total_chars for tb in textbooks.values()))
 
     dec_rows = [{
         "决策ID": d.decision_id,

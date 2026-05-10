@@ -99,13 +99,13 @@ class RAGEngine:
 - 两阶段整合：
   - 阶段一（规则过滤）：名称相似度 ≥ 0.82（`MERGE_SIM_THRESHOLD=0.82`）→ merge 候选
   - 阶段二（决策生成）：跨教材候选 → merge；同教材候选 → keep
-- 压缩估算：知识点级压缩，`integrated_chars = total_chars - merge_count * 50`
-- 整合后字数上限：`min(integrated_chars / total_chars, 0.30)`
+- 压缩估算：正文级压缩，`original_chars` = 教材正文总字数，`integrated_chars` = 去重后知识点定义字数。知识点定义是对正文的高度提炼，因此压缩比自然远低于 30%（作为后续完整正文压缩算法的目标值）
 
 **接口**：
 ```python
-def integrate(nodes: list[KnowledgeNode]) -> tuple[list[IntegrationDecision], dict]
+def integrate(nodes: list[KnowledgeNode], total_body_chars: int = 0) -> tuple[list[IntegrationDecision], dict]
 # stats: {total_nodes, total_decisions, merge_count, keep_count, remove_count, original_chars, integrated_chars, compression_ratio}
+# original_chars = 教材正文总字数, integrated_chars = 去重后知识点定义字数
 ```
 
 ### 3.5 RAG 问答 Agent（RAGEngine.ask + build_prompt）

@@ -7,8 +7,14 @@ def _name_similarity(a: str, b: str) -> float:
     return SequenceMatcher(None, a, b).ratio()
 
 
-def integrate(nodes: list[KnowledgeNode]) -> tuple[list[IntegrationDecision], dict]:
-    """Generate merge/keep/remove decisions across textbooks."""
+def integrate(nodes: list[KnowledgeNode], total_body_chars: int = 0) -> tuple[list[IntegrationDecision], dict]:
+    """Generate merge/keep/remove decisions across textbooks.
+
+    Args:
+        nodes: Knowledge nodes from all textbooks.
+        total_body_chars: Total body text chars across all textbooks.
+                          Used as denominator for compression ratio (body → knowledge).
+    """
     decisions: list[IntegrationDecision] = []
     decision_id = 0
 
@@ -139,16 +145,31 @@ def integrate(nodes: list[KnowledgeNode]) -> tuple[list[IntegrationDecision], di
                     ))
 
     # Step 6: Calculate stats
-    total_chars = sum(len(n.definition) for n in nodes)
+    # original_chars = total body text of all textbooks (the raw input)
+    # integrated_chars = unique knowledge definitions after dedup (the compressed output)
+    # This reflects real knowledge compression: body text → concise definitions
+    if total_body_chars > 0:
+        original_chars = total_body_chars
+    else:
+        original_chars = sum(len(n.definition) for n in nodes)
+
     merge_count = sum(1 for d in decisions if d.action == DecisionAction.MERGE)
     keep_count = sum(1 for d in decisions if d.action == DecisionAction.KEEP)
     remove_count = sum(1 for d in decisions if d.action == DecisionAction.REMOVE)
 
-    # Estimate integrated size: unique nodes * avg def length + dedup savings
-    unique_nodes = len(name_to_nodes) - merge_count
-    avg_def_len = total_chars / max(len(nodes), 1)
-    integrated_chars = int(unique_nodes * avg_def_len)
-    compression_ratio = round(min(integrated_chars / max(total_chars, 1), 1.0), 4)
+    # Sum definition chars for unique nodes (after dedup)
+    merged_node_names: set[str] = set()
+    for d in decisions:
+        if d.action == DecisionAction.MERGE:
+            merged_node_names.update(d.affected_nodes[1:])  # secondary names absorbed
+        elif d.action == DecisionAction.REMOVE:
+            merged_node_names.update(d.affected_nodes)
+
+    unique_def_chars = sum(
+        len(n.definition) for n in nodes if n.name not in merged_node_names
+    )
+    integrated_chars = unique_def_chars
+    compression_ratio = round(integrated_chars / max(original_chars, 1), 4)
 
     stats = {
         "total_nodes": len(nodes),
@@ -156,7 +177,7 @@ def integrate(nodes: list[KnowledgeNode]) -> tuple[list[IntegrationDecision], di
         "merge_count": merge_count,
         "keep_count": keep_count,
         "remove_count": remove_count,
-        "original_chars": total_chars,
+        "original_chars": original_chars,
         "integrated_chars": integrated_chars,
         "compression_ratio": compression_ratio,
     }
