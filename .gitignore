@@ -27,6 +27,9 @@ data/index/
 .gradio/
 *.log
 
+# Sample files (generated at runtime)
+data/samples/
+
 # Textbook files must not be committed
 *.pdf
 教材/

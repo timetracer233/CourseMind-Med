@@ -44,7 +44,7 @@ LangGraph、CrewAI 等框架提供了 Agent 协作的状态机抽象，但本项
 **职责**：接收 PDF/MD/TXT 文件，统一输出 `Textbook` 结构（包含章节列表、总字数、总页数）。
 
 **关键设计**：
-- 快速模式：默认只解析前 60 页或前 8 章（`FAST_MODE_MAX_PAGES=60`, `FAST_MODE_MAX_CHAPTERS=8`），防止大 PDF 阻塞演示
+- 快速模式：默认只解析前 60 页或前 8 章（`FAST_MODE_MAX_PAGES_PER_BOOK=60`, `FAST_MODE_MAX_CHAPTERS_PER_BOOK=8`），防止大 PDF 阻塞演示
 - 中文章节识别正则：`第[一二三四五六七八九十百零\d]+[章节篇]` + `Chapter\s+\d+` + `^\d+[\.、]\s*.+`
 - 单文件解析失败不影响其他文件
 
@@ -331,7 +331,7 @@ EXTRACT_PROMPT = """你是一个医学教材知识工程师。请从以下教材
 
 架构层面支持两种模式：
 - **快速模式**（默认）：PDF 只解析前 60 页/前 8 章，保证演示稳定
-- **完整模式**：处理全部内容，由 `FAST_MODE_MAX_PAGES` / `FAST_MODE_MAX_CHAPTERS` 配置项控制
+- **完整模式**：处理全部内容，由 `FAST_MODE_MAX_PAGES_PER_BOOK` / `FAST_MODE_MAX_CHAPTERS_PER_BOOK` 配置项控制
 
 用户感知是"等待时间长短"，而非"系统崩溃"。
 
