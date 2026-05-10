@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local secrets
+.env
+
+# Generated/runtime data
+outputs/
+tmp/
+data/textbooks/
+data/uploads/
+data/index/
+
+# Claude Code internal
+.claude/
+
+# Textbook files must not be committed
+*.pdf
+教材/
+
+# OS/editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
