@@ -80,8 +80,7 @@ def extract_from_textbook(tb: Textbook) -> tuple[list[KnowledgeNode], list[Knowl
 
 **关键设计**：
 - 分块策略：chunk_size=700（中文字符），overlap=100，min(700, len(text)) 末尾处理
-- 向量化：MiniMax embo-01 API 优先，构建知识库用 `type=db`，提问用 `type=query`
-- 兜底：MiniMax API 不可用时回退 sklearn TF-IDF
+- 向量化：sklearn TF-IDF，本地轻量、无需在线 Embedding API
 - 检索：cosine_similarity，top_k=5
 
 **接口**：
@@ -169,7 +168,7 @@ def generate_report(
 
 2. 解析完成后自动建立 RAG 索引
    → chunk_all() 将教材按章节分块
-   → rag_engine.index() 优先构建 MiniMax embedding 向量矩阵，失败回退 TF-IDF
+   → rag_engine.index() 构建 TF-IDF 轻量向量矩阵
 
 3. 用户点击"抽取知识点/构建图谱"
    → extract_from_textbook() 遍历每章节调用 DeepSeek
@@ -197,7 +196,7 @@ def generate_report(
 用户问题
     │
     ▼
-MiniMax embo-01 query embedding（type=query）
+TF-IDF transform（问题向量化）
     │
     ▼
 cosine_similarity → top-5 chunks
@@ -217,10 +216,11 @@ DeepSeek Prompt（含检索上下文）
 | TOP_K | 5 | 上下文长度和答案覆盖的平衡点 |
 | MERGE_SIM_THRESHOLD | 0.82 | 平衡召回率和精确率 |
 
-**为什么用 MiniMax embedding + TF-IDF 兜底**：
-- MiniMax embo-01 满足赛题对 embedding/RAG 的要求，避免本机模型下载和算力瓶颈
-- `type=db` / `type=query` 可以区分知识库构建和用户提问场景
-- TF-IDF 作为确定性兜底，保证 API 不可用时演示不中断
+**为什么当前版本用 TF-IDF**：
+- 不依赖在线 Embedding API，避免比赛现场额度、网络和鉴权风险
+- 不下载本地大模型，避免魔搭部署和本机首次下载卡住
+- sklearn 依赖稳定，能在 5 小时内保证 RAG 带引用闭环
+- 后续版本可升级到 API embedding 或本地 sentence-transformers
 
 ## 6. Prompt 工程
 
@@ -285,7 +285,7 @@ EXTRACT_PROMPT = """你是一个医学教材知识工程师。请从以下教材
 
 | 局限 | 影响 | 后续改进方案 |
 |------|------|------------|
-| MiniMax API 不可用或网络波动 | RAG 语义检索退化 | 自动回退 TF-IDF，并保留引用来源 |
+| TF-IDF 对语义改写不敏感 | 同义但不同词的检索可能较弱 | 后续升级 API embedding 或本地 sentence-transformers |
 | 知识点级压缩而非正文压缩 | 用户感知压缩比与正文压缩不同 | 基于整合结果生成完整精华教材正文 |
 | PDF 快速模式只处理前 60 页 | 长教材后半部分被忽略 | 增加"全量处理"开关 |
 | 扫描版 PDF 不支持 | 旧版教材无法解析 | 集成 PaddleOCR |
@@ -346,7 +346,7 @@ EXTRACT_PROMPT = """你是一个医学教材知识工程师。请从以下教材
 |---------|-------|-------|-----------|
 | 架构总览 | 3 | +1 | 7个模块清晰分工，Mermaid 图展示 |
 | 设计决策论证 | 5 | +2 | 详细对比轻量编排 vs 框架化方案，说明为什么不用复杂框架 |
-| RAG Pipeline | 4 | +1 | 分块+MiniMax embedding+检索+生成完整链路，TF-IDF 兜底 |
+| RAG Pipeline | 4 | +1 | 分块+TF-IDF轻量向量化+检索+生成完整链路 |
 | Prompt 工程 | 2 | +1 | 知识点抽取/RAG 两套 Prompt，有格式约束 |
 | 已知局限 | 1 | +1 | 6项局限 + 具体改进方案 |
 | 创新点 | 0 | 5 | 医学优先通用架构、快速模式、规则反馈、双重压缩可视化 |

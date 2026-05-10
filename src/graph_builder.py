@@ -38,7 +38,15 @@ def build_graph_html(
     for n in nodes:
         name_count[n.name] = name_count.get(n.name, 0) + 1
 
+    # deduplicate nodes by name
+    seen_names: set[str] = set()
+    unique_nodes: list[KnowledgeNode] = []
     for n in nodes:
+        if n.name not in seen_names:
+            seen_names.add(n.name)
+            unique_nodes.append(n)
+
+    for n in unique_nodes:
         size = 10 + name_count.get(n.name, 1) * 4
         label = f"{n.name}"
         title = f"<b>{n.name}</b><br>类别: {n.category}<br>教材: {n.textbook}<br>章节: {n.chapter}<br>页码: {n.page}<br>{n.definition}"
@@ -46,6 +54,8 @@ def build_graph_html(
 
     edge_set = set()
     for e in edges:
+        if e.source not in seen_names or e.target not in seen_names:
+            continue
         key = (e.source, e.target, e.relation_type)
         if key in edge_set:
             continue

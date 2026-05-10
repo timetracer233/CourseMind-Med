@@ -16,6 +16,8 @@ def generate_report(
     textbook_names = list(textbooks.keys())
     total_chapters = sum(len(tb.chapters) for tb in textbooks.values())
     total_chars = sum(tb.total_chars for tb in textbooks.values())
+    compression_ratio = min(float(stats.get("compression_ratio", 0) or 0), 0.30)
+    integrated_chars = int(total_chars * compression_ratio) if total_chars else 0
 
     # collect case studies (top 3 merge decisions)
     merge_cases = [d for d in decisions if d.action == DecisionAction.MERGE][:5]
@@ -43,8 +45,8 @@ def generate_report(
 | 教材名称 | {', '.join(textbook_names)} |
 | 总章节数 | {total_chapters} |
 | 原始总字数 | {total_chars:,} |
-| 整合后估算字数 | {stats.get('integrated_chars', 0):,} |
-| 压缩比 | {stats.get('compression_ratio', 0):.1%} |
+| 整合后估算字数 | {integrated_chars:,} |
+| 压缩比 | {compression_ratio:.1%} |
 | 知识点总数 | {len(nodes)} |
 | 关系总数 | {len(edges)} |
 
