@@ -4,16 +4,58 @@ from pathlib import Path
 from src.schemas import Textbook, Chapter, ParseStatus
 from src.config import FAST_MODE_MAX_PAGES, FAST_MODE_MAX_CHAPTERS
 
-CH_RE = re.compile(
+# Chapter-like patterns in TOC and body
+CH_HEADING_RE = re.compile(
     r"(第[一二三四五六七八九十百零\d]+[章节篇])"
     r"|(Chapter\s+\d+)"
-    r"|(^\d+[\.、]\s*.+)",
+    r"|(^[一二三四五六七八九十]+[、．.])"
+    r"|(^\d+[\.、]\s*[^\d])",
     re.MULTILINE,
 )
 
 
-def _parse_pdf_by_font(filepath: str) -> Textbook:
-    """Parse PDF using font-size heuristics to detect real chapter headings."""
+def _find_toc(doc: fitz.Document, max_toc_pages: int = 10) -> tuple[int, int]:
+    """Search for TOC pages. Returns (start_page, end_page) or (0, 0) if not found."""
+    toc_keywords = ["目录", "目次", "CONTENTS"]
+    for pn in range(min(max_toc_pages, len(doc))):
+        text = doc[pn].get_text()
+        for kw in toc_keywords:
+            if kw in text:
+                # Collect TOC pages (usually spans 2-4 pages after the keyword)
+                toc_start = pn
+                toc_end = pn
+                for next_pn in range(pn + 1, min(pn + 5, len(doc))):
+                    next_text = doc[next_pn].get_text()
+                    # TOC pages have many chapter-like patterns or dots for page numbers
+                    if len(next_text) > 50 and (CH_HEADING_RE.search(next_text) or "…" in next_text or ".." in next_text):
+                        toc_end = next_pn
+                    else:
+                        break
+                return toc_start, toc_end
+    return 0, 0
+
+
+def _extract_toc_titles(doc: fitz.Document, toc_start: int, toc_end: int) -> list[str]:
+    """Extract chapter titles from TOC pages."""
+    titles = []
+    for pn in range(toc_start, toc_end + 1):
+        text = doc[pn].get_text()
+        for line in text.split("\n"):
+            line = line.strip()
+            if not line:
+                continue
+            m = CH_HEADING_RE.match(line)
+            if m:
+                # Clean up: remove trailing dots, page numbers, extra spaces
+                title = re.sub(r"[\s…\.]{2,}\d+$", "", line).strip()
+                title = re.sub(r"\s+", " ", title)
+                if len(title) >= 3 and len(title) <= 80:
+                    titles.append(title)
+    return titles
+
+
+def _parse_pdf_by_toc(filepath: str) -> Textbook:
+    """Primary: detect TOC → extract chapter titles → locate boundaries in body."""
     filename = Path(filepath).name
     tb = Textbook(filename=filename, status=ParseStatus.PARSING)
     try:
@@ -21,7 +63,74 @@ def _parse_pdf_by_font(filepath: str) -> Textbook:
         total_pages = min(len(doc), FAST_MODE_MAX_PAGES)
         tb.total_pages = total_pages
 
-        # Collect all text blocks with font info
+        # Step 1: Find TOC and extract chapter titles
+        toc_start, toc_end = _find_toc(doc)
+        toc_titles = _extract_toc_titles(doc, toc_start, toc_end) if toc_start > 0 else []
+
+        if len(toc_titles) < 2:
+            doc.close()
+            return _parse_pdf_by_font_fallback(filepath)
+
+        # Step 2: Search body text for TOC title occurrences to find chapter pages
+        chapter_pages: list[tuple[str, int]] = []
+        for title in toc_titles:
+            # Search for the title in the document (after TOC)
+            search_key = title[:12]  # First 12 chars is enough to identify
+            for pn in range(toc_end + 1, total_pages):
+                page_text = doc[pn].get_text()
+                if search_key in page_text:
+                    chapter_pages.append((title, pn + 1))
+                    break
+            else:
+                # Title not found by substring — try regex
+                chapter_pages.append((title, 0))
+
+        # Filter out titles that couldn't be located
+        located = [(t, p) for t, p in chapter_pages if p > 0]
+        if len(located) < 2:
+            doc.close()
+            return _parse_pdf_by_font_fallback(filepath)
+
+        # Step 3: Build chapters with boundaries
+        chapters = []
+        for i, (title, page) in enumerate(located):
+            next_page = located[i + 1][1] if i + 1 < len(located) else total_pages + 1
+            # Collect text for this chapter
+            body_parts = []
+            for pn in range(page - 1, min(next_page - 1, total_pages)):
+                body_parts.append(doc[pn].get_text())
+            body = "\n".join(body_parts)
+            chapters.append(Chapter(
+                title=title,
+                page_start=page,
+                page_end=min(next_page - 1, total_pages),
+                char_count=len(body),
+                text=body,
+            ))
+
+        doc.close()
+
+        if len(chapters) > FAST_MODE_MAX_CHAPTERS:
+            chapters = chapters[:FAST_MODE_MAX_CHAPTERS]
+
+        tb.chapters = chapters
+        tb.total_chars = sum(c.char_count for c in chapters)
+        tb.status = ParseStatus.DONE
+    except Exception as e:
+        tb.status = ParseStatus.FAILED
+        tb.error = str(e)
+    return tb
+
+
+def _parse_pdf_by_font_fallback(filepath: str) -> Textbook:
+    """Fallback: font-size heuristics for chapter detection."""
+    filename = Path(filepath).name
+    tb = Textbook(filename=filename, status=ParseStatus.PARSING)
+    try:
+        doc = fitz.open(filepath)
+        total_pages = min(len(doc), FAST_MODE_MAX_PAGES)
+        tb.total_pages = total_pages
+
         blocks_info: list[dict] = []
         for page_num in range(total_pages):
             page = doc[page_num]
@@ -33,15 +142,12 @@ def _parse_pdf_by_font(filepath: str) -> Textbook:
                     text = "".join([span["text"] for span in line["spans"]])
                     if not text.strip():
                         continue
-                    # Get the max font size in this line
                     sizes = [span["size"] for span in line["spans"] if span["text"].strip()]
                     avg_size = sum(sizes) / len(sizes) if sizes else 0
                     max_size = max(sizes) if sizes else 0
                     blocks_info.append({
-                        "page": page_num + 1,
-                        "text": text,
-                        "size": max_size,
-                        "avg_size": avg_size,
+                        "page": page_num + 1, "text": text,
+                        "size": max_size, "avg_size": avg_size,
                     })
 
         doc.close()
@@ -50,47 +156,40 @@ def _parse_pdf_by_font(filepath: str) -> Textbook:
             tb.status = ParseStatus.DONE
             return tb
 
-        # Find body font size (median of all text)
         all_sizes = sorted([b["avg_size"] for b in blocks_info])
         if not all_sizes:
             tb.status = ParseStatus.DONE
             return tb
 
         body_size = all_sizes[len(all_sizes) // 2]
+        heading_threshold = body_size * 1.15
 
-        # A heading is: font larger than body AND relatively short text
-        heading_threshold = body_size * 1.15  # 15% larger than body
         chapter_blocks = []
         for b in blocks_info:
             text = b["text"].strip()
             if not text:
                 continue
-            # Heading signals: larger font or matches 第X章 pattern
             is_larger = b["avg_size"] >= heading_threshold
-            is_ch_pattern = bool(re.match(r"(第[一二三四五六七八九十百零\d]+[章节篇])", text))
-            is_chapter_pattern = bool(re.match(r"(Chapter\s+\d+)", text, re.IGNORECASE))
-            if is_larger or is_ch_pattern or is_chapter_pattern:
+            is_ch = bool(re.match(r"(第[一二三四五六七八九十百零\d]+[章节篇])", text))
+            is_chapter = bool(re.match(r"(Chapter\s+\d+)", text, re.IGNORECASE))
+            if is_larger or is_ch or is_chapter:
                 chapter_blocks.append(b)
 
-        # If font analysis found nothing, fall back to regex
-        if not chapter_blocks:
-            return _parse_pdf_by_regex(filepath, blocks_info)
+        if len(chapter_blocks) < 2:
+            return _parse_pdf_by_page_chunks(filepath, blocks_info)
 
-        # Build chapters from detected headings
         chapters = []
         for i, cb in enumerate(chapter_blocks):
-            # Find where this chapter's text ends (next chapter heading or EOF)
-            next_page = chapter_blocks[i + 1]["page"] if i + 1 < len(chapter_blocks) else total_pages + 1
-            # Collect text for this chapter
+            npg = chapter_blocks[i + 1]["page"] if i + 1 < len(chapter_blocks) else total_pages + 1
             body = []
             for b in blocks_info:
-                if b["page"] >= cb["page"] and b["page"] < next_page:
+                if b["page"] >= cb["page"] and b["page"] < npg:
                     body.append(b["text"])
             body_text = "\n".join(body)
             chapters.append(Chapter(
                 title=cb["text"].strip()[:80],
                 page_start=cb["page"],
-                page_end=min(next_page, total_pages),
+                page_end=min(npg, total_pages),
                 char_count=len(body_text),
                 text=body_text,
             ))
@@ -107,8 +206,8 @@ def _parse_pdf_by_font(filepath: str) -> Textbook:
     return tb
 
 
-def _parse_pdf_by_regex(filepath: str, blocks_info: list[dict] | None = None) -> Textbook:
-    """Legacy regex-based PDF chapter detection (fallback)."""
+def _parse_pdf_by_page_chunks(filepath: str, blocks_info: list[dict] | None = None) -> Textbook:
+    """Last resort: chunk by page ranges."""
     filename = Path(filepath).name
     tb = Textbook(filename=filename, status=ParseStatus.PARSING)
     try:
@@ -117,59 +216,38 @@ def _parse_pdf_by_regex(filepath: str, blocks_info: list[dict] | None = None) ->
             total_pages = min(len(doc), FAST_MODE_MAX_PAGES)
             blocks_info = []
             for page_num in range(total_pages):
-                page = doc[page_num]
-                blocks = page.get_text("dict")["blocks"]
-                for blk in blocks:
+                for blk in doc[page_num].get_text("dict")["blocks"]:
                     if blk["type"] != 0:
                         continue
                     for line in blk["lines"]:
                         text = "".join([span["text"] for span in line["spans"]])
                         if text.strip():
-                            blocks_info.append({"page": page_num + 1, "text": text, "size": 0, "avg_size": 0})
+                            blocks_info.append({"page": page_num + 1, "text": text})
             doc.close()
             tb.total_pages = total_pages
         else:
             tb.total_pages = max((b["page"] for b in blocks_info), default=1)
 
-        full_text = "\n".join([b["text"] for b in blocks_info])
-        matches = list(CH_RE.finditer(full_text))
-        chapters = []
+        texts_by_page: dict[int, list[str]] = {}
+        for b in blocks_info:
+            p = b["page"]
+            if p not in texts_by_page:
+                texts_by_page[p] = []
+            texts_by_page[p].append(b["text"])
 
-        if len(matches) >= 2:
-            for i, m in enumerate(matches):
-                start = m.start()
-                end = matches[i + 1].start() if i + 1 < len(matches) else len(full_text)
-                body = full_text[start:end].strip()
-                title = m.group(0).strip()
-                # Find page for this position
-                char_pos = 0
-                page = 1
-                for b in blocks_info:
-                    if char_pos + len(b["text"]) > start:
-                        page = b["page"]
-                        break
-                    char_pos += len(b["text"])
-                chapters.append(Chapter(title=title, page_start=page, page_end=page, char_count=len(body), text=body))
-        else:
-            # No chapter markers found: create pseudo-chapters by page ranges
-            texts_by_page: dict[int, list[str]] = {}
-            for b in blocks_info:
-                p = b["page"]
-                if p not in texts_by_page:
-                    texts_by_page[p] = []
-                texts_by_page[p].append(b["text"])
-            pages_per_chapter = max(1, len(texts_by_page) // min(8, len(texts_by_page)))
-            page_nums = sorted(texts_by_page.keys())
-            for i in range(0, len(page_nums), pages_per_chapter):
-                chunk_pages = page_nums[i:i + pages_per_chapter]
-                body = "\n".join(["\n".join(texts_by_page[p]) for p in chunk_pages])
-                chapters.append(Chapter(
-                    title=f"第{chunk_pages[0]}-{chunk_pages[-1]}页",
-                    page_start=chunk_pages[0],
-                    page_end=chunk_pages[-1],
-                    char_count=len(body),
-                    text=body,
-                ))
+        chapters = []
+        pages_per = max(1, len(texts_by_page) // min(8, len(texts_by_page)))
+        page_nums = sorted(texts_by_page.keys())
+        for i in range(0, len(page_nums), pages_per):
+            chunk_pages = page_nums[i:i + pages_per]
+            body = "\n".join(["\n".join(texts_by_page[p]) for p in chunk_pages])
+            chapters.append(Chapter(
+                title=f"第{chunk_pages[0]}-{chunk_pages[-1]}页",
+                page_start=chunk_pages[0],
+                page_end=chunk_pages[-1],
+                char_count=len(body),
+                text=body,
+            ))
 
         if len(chapters) > FAST_MODE_MAX_CHAPTERS:
             chapters = chapters[:FAST_MODE_MAX_CHAPTERS]
@@ -184,7 +262,7 @@ def _parse_pdf_by_regex(filepath: str, blocks_info: list[dict] | None = None) ->
 
 
 def parse_pdf(filepath: str) -> Textbook:
-    return _parse_pdf_by_font(filepath)
+    return _parse_pdf_by_toc(filepath)
 
 
 def parse_markdown(filepath: str) -> Textbook:
@@ -221,7 +299,7 @@ def parse_txt(filepath: str) -> Textbook:
     tb = Textbook(filename=filename, status=ParseStatus.PARSING)
     try:
         text = Path(filepath).read_text(encoding="utf-8")
-        matches = list(CH_RE.finditer(text))
+        matches = list(CH_HEADING_RE.finditer(text))
         chapters = []
         if len(matches) >= 1:
             for i, m in enumerate(matches):

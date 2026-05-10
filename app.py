@@ -101,11 +101,21 @@ def on_build_graph():
     all_nodes = []
     all_edges = []
 
-    for tb in textbooks.values():
-        if tb.status == ParseStatus.DONE:
-            nodes, edges = extract_from_textbook(tb)
-            all_nodes.extend(nodes)
-            all_edges.extend(edges)
+    try:
+        for tb in textbooks.values():
+            if tb.status == ParseStatus.DONE:
+                nodes, edges = extract_from_textbook(tb)
+                all_nodes.extend(nodes)
+                all_edges.extend(edges)
+    except Exception as e:
+        err_msg = str(e)[:200]
+        gr.Warning(f"处理超时或出错：{err_msg[:60]}。请尝试加载样例教材或减少章节数。", duration=5)
+        return (
+            f"<p style='color:#c62828;text-align:center;padding:40px'>知识抽取时出错。<br>可能原因：教材文件过大、API 超时或网络波动。<br><small>{err_msg}</small><br><br>建议：加载样例教材测试，或减少教材章节数后重试。</p>",
+            pd.DataFrame(columns=["名称", "类别", "教材", "章节", "定义"]),
+            pd.DataFrame(columns=["源", "目标", "关系", "说明"]),
+            f"知识抽取失败：{err_msg[:80]}",
+        )
 
     if not all_nodes:
         return (
@@ -237,7 +247,9 @@ def _decisions_df() -> pd.DataFrame:
 
 def on_generate_report():
     report = generate_report(textbooks, all_nodes, all_edges, decisions, integration_stats)
-    return report, "报告已生成并保存到 report/整合报告.md"
+    names = "_".join([Path(tb).stem[:15] for tb in textbooks.keys()][:3])
+    fname = f"report/整合报告_{names}.md" if names else "report/整合报告.md"
+    return report, f"报告已保存到 {fname}"
 
 
 def on_load_example():
@@ -316,9 +328,9 @@ footer { visibility: hidden; }
 
 
 def create_app():
-    theme = gr.themes.Soft(primary_hue="blue", secondary_hue="blue", neutral_hue="slate")
+    theme = gr.themes.Soft(primary_hue="blue")
 
-    with gr.Blocks(title="CourseMind-Med", css=CSS, theme=theme) as demo:
+    with gr.Blocks(title="CourseMind-Med") as demo:
         gr.Markdown("# CourseMind-Med")
         gr.Markdown("通用教材知识整合智能体 — 上传、解析、图谱、整合、问答、报告")
 
@@ -420,6 +432,11 @@ def create_app():
                         report_msg = gr.Markdown("点击按钮生成报告")
                         report_preview = gr.Markdown("报告将在此处预览...")
                         report_btn.click(fn=on_generate_report, inputs=[], outputs=[report_preview, report_msg])
+                        with gr.Accordion("问题反馈 / 联系我们", open=False):
+                            gr.Markdown("如有问题或建议，请通过 GitHub Issues 反馈：[github.com/timetracer233/CourseMind-Med/issues](https://github.com/timetracer233/CourseMind-Med/issues)")
+                            fb_input = gr.Textbox(label="快速反馈", placeholder="输入建议或遇到的问题...", lines=2)
+                            fb_btn = gr.Button("提交反馈", variant="secondary", size="sm")
+                            fb_btn.click(fn=lambda _: gr.Info("感谢反馈！", duration=3), inputs=[fb_input], outputs=[])
 
         return demo
 
@@ -429,5 +446,5 @@ demo = create_app()
 if __name__ == "__main__":
     demo.queue(default_concurrency_limit=3, max_size=10).launch(
         server_name="0.0.0.0", server_port=7860, share=True,
-        css=CSS, theme=gr.themes.Soft(primary_hue="blue", secondary_hue="blue", neutral_hue="slate"),
+        css=CSS, theme=gr.themes.Soft(primary_hue="blue"),
     )
