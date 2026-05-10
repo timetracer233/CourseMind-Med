@@ -55,7 +55,7 @@ def _extract_toc_titles(doc: fitz.Document, toc_start: int, toc_end: int) -> lis
 
 
 def _parse_pdf_by_toc(filepath: str) -> Textbook:
-    """Primary: detect TOC → extract chapter titles → locate boundaries in body."""
+    """Primary: use PyMuPDF's built-in doc.get_toc() to extract PDF outline."""
     filename = Path(filepath).name
     tb = Textbook(filename=filename, status=ParseStatus.PARSING)
     try:
@@ -63,39 +63,38 @@ def _parse_pdf_by_toc(filepath: str) -> Textbook:
         total_pages = min(len(doc), FAST_MODE_MAX_PAGES)
         tb.total_pages = total_pages
 
-        # Step 1: Find TOC and extract chapter titles
-        toc_start, toc_end = _find_toc(doc)
-        toc_titles = _extract_toc_titles(doc, toc_start, toc_end) if toc_start > 0 else []
+        toc = doc.get_toc()
+        doc.close()
 
-        if len(toc_titles) < 2:
-            doc.close()
+        if not toc:
             return _parse_pdf_by_font_fallback(filepath)
 
-        # Step 2: Search body text for TOC title occurrences to find chapter pages
-        chapter_pages: list[tuple[str, int]] = []
-        for title in toc_titles:
-            # Search for the title in the document (after TOC)
-            search_key = title[:12]  # First 12 chars is enough to identify
-            for pn in range(toc_end + 1, total_pages):
-                page_text = doc[pn].get_text()
-                if search_key in page_text:
-                    chapter_pages.append((title, pn + 1))
-                    break
-            else:
-                # Title not found by substring — try regex
-                chapter_pages.append((title, 0))
+        # Filter front matter: skip entries with keywords or before page 18
+        FRONT_MATTER_KW = ["序", "前言", "目录", "目次", "说明", "编委", "版权", "出版", "彩图",
+                           "使用说明", "修订说明", "数字资源", "二维码", "数字教材"]
+        chapters_raw = []
+        for lvl, title, page in toc:
+            title_s = title.strip()
+            if lvl != 1:
+                continue
+            if page < 18 and len(chapters_raw) == 0:
+                continue
+            if any(kw in title_s for kw in FRONT_MATTER_KW):
+                continue
+            if len(title_s) < 3:
+                continue
+            chapters_raw.append((title_s, page))
 
-        # Filter out titles that couldn't be located
-        located = [(t, p) for t, p in chapter_pages if p > 0]
-        if len(located) < 2:
-            doc.close()
+        if len(chapters_raw) < 2:
             return _parse_pdf_by_font_fallback(filepath)
 
-        # Step 3: Build chapters with boundaries
+        # TOC mode: read all pages (not limited by FAST_MODE)
+        doc = fitz.open(filepath)
+        tb.total_pages = len(doc)
+        total_pages = len(doc)
         chapters = []
-        for i, (title, page) in enumerate(located):
-            next_page = located[i + 1][1] if i + 1 < len(located) else total_pages + 1
-            # Collect text for this chapter
+        for i, (title, page) in enumerate(chapters_raw):
+            next_page = chapters_raw[i + 1][1] if i + 1 < len(chapters_raw) else total_pages + 1
             body_parts = []
             for pn in range(page - 1, min(next_page - 1, total_pages)):
                 body_parts.append(doc[pn].get_text())
@@ -110,8 +109,10 @@ def _parse_pdf_by_toc(filepath: str) -> Textbook:
 
         doc.close()
 
-        if len(chapters) > FAST_MODE_MAX_CHAPTERS:
-            chapters = chapters[:FAST_MODE_MAX_CHAPTERS]
+        # TOC extraction is fast and accurate — allow more chapters
+        max_ch = max(FAST_MODE_MAX_CHAPTERS, 20)
+        if len(chapters) > max_ch:
+            chapters = chapters[:max_ch]
 
         tb.chapters = chapters
         tb.total_chars = sum(c.char_count for c in chapters)
